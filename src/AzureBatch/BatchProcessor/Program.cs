@@ -34,13 +34,8 @@ namespace BatchProcessor
         private static string BatchJobTaskMapperCommandline;
         private static string BatchJobTaskReducerCommandline;
 
+        private static string LocalInputDirectory;
         private static string LocalOutputDirectory;
-
-        private static List<string> InputFilePaths = new List<string> {
-                @"C:\temp\input\inputfile1.txt",
-                @"C:\temp\input\inputfile2.txt",
-                @"C:\temp\input\inputfile3.txt"
-            };
 
         public static void Main(string[] args)
         {
@@ -58,7 +53,7 @@ namespace BatchProcessor
             BatchJobTaskMapperCommandline = ConfigurationManager.AppSettings["BatchJobTaskMapperCommandline"];
             BatchJobTaskReducerCommandline = ConfigurationManager.AppSettings["BatchJobTaskReducerCommandline"];
 
-
+            LocalInputDirectory = ConfigurationManager.AppSettings["LocalInputDirectory"];
             LocalOutputDirectory = ConfigurationManager.AppSettings["LocalOutputDirectory"];
 
             if (String.IsNullOrEmpty(BatchAccountName) || String.IsNullOrEmpty(BatchAccountKey) || String.IsNullOrEmpty(BatchAccountUrl) ||
@@ -113,22 +108,22 @@ namespace BatchProcessor
 
             // Upload the data files. This is the data that will be processed by each of the tasks that are
             // executed on the compute nodes within the pool.
-            List<ResourceFile> inputFiles = await UploadFilesToContainerAsync(blobClient, StorageInputContainerName, InputFilePaths);
+            List<ResourceFile> inputFiles = await UploadFilesToContainerAsync(blobClient, StorageInputContainerName, LocalInputDirectory);
 
             // Obtain a shared access signature that provides write access to the output container to which
             // the tasks will upload their output.
-            string outputContainerSasUrl = GetContainerSasUrl(blobClient, StorageOutputContainerName, SharedAccessBlobPermissions.Write);
+            string outputContainerSasUrl = GetContainerSasUrl(blobClient, StorageOutputContainerName, SharedAccessBlobPermissions.Write | SharedAccessBlobPermissions.Read | SharedAccessBlobPermissions.List);
 
             // Create a BatchClient. We'll now be interacting with the Batch service in addition to Storage
             BatchSharedKeyCredentials cred = new BatchSharedKeyCredentials(BatchAccountUrl, BatchAccountName, BatchAccountKey);
             using (BatchClient batchClient = BatchClient.Open(cred))
             {
                 // Create the job that will run the tasks.
-                await CreateJobAsync(batchClient, BatchJobId, BatchPoolId);
+                await CreateJobAsync(batchClient, BatchJobId, BatchPoolId, storageAccount);
 
                 // Add the tasks to the job. We need to supply a container shared access signature for the
                 // tasks so that they can upload their output to Azure Storage.
-                await AddTasksAsync(batchClient, BatchJobId, inputFiles, outputContainerSasUrl);
+                await AddTasksAsync(batchClient, BatchJobId, inputFiles, outputContainerSasUrl, storageAccount);
 
                 // Monitor task success/failure, specifying a maximum amount of time to wait for the tasks to complete
                 await MonitorTasks(batchClient, BatchJobId, TimeSpan.FromMinutes(BatchJobTimeoutInMinutes));
@@ -244,13 +239,13 @@ namespace BatchProcessor
         /// </summary>
         /// <param name="blobClient">A <see cref="Microsoft.WindowsAzure.Storage.Blob.CloudBlobClient"/>.</param>
         /// <param name="inputContainerName">The name of the blob storage container to which the files should be uploaded.</param>
-        /// <param name="filePaths">A collection of paths of the files to be uploaded to the container.</param>
+        /// <param name="inputFileDirectory">Absolute directory path containing the input files</param>
         /// <returns>A collection of <see cref="ResourceFile"/> objects.</returns>
-        private static async Task<List<ResourceFile>> UploadFilesToContainerAsync(CloudBlobClient blobClient, string inputContainerName, List<string> filePaths)
+        private static async Task<List<ResourceFile>> UploadFilesToContainerAsync(CloudBlobClient blobClient, string inputContainerName, string inputFileDirectory)
         {
             List<ResourceFile> resourceFiles = new List<ResourceFile>();
 
-            foreach (string filePath in filePaths)
+            foreach (string filePath in Directory.EnumerateFiles(inputFileDirectory))
             {
                 resourceFiles.Add(await UploadFileToContainerAsync(blobClient, inputContainerName, filePath));
             }
@@ -297,7 +292,7 @@ namespace BatchProcessor
         /// <param name="jobId">The id of the job to be created.</param>
         /// <param name="poolId">The id of the <see cref="CloudPool"/> in which to create the job.</param>
         /// <returns>A <see cref="System.Threading.Tasks.Task"/> object that represents the asynchronous operation.</returns>
-        private static async Task CreateJobAsync(BatchClient batchClient, string jobId, string poolId)
+        private static async Task CreateJobAsync(BatchClient batchClient, string jobId, string poolId, CloudStorageAccount linkedStorageAccount)
         {
             Console.WriteLine("Creating job [{0}]...", jobId);
 
@@ -320,7 +315,7 @@ namespace BatchProcessor
         /// <param name="outputContainerSasUrl">The shared access signature URL for the container within Azure Storage that
         /// will receive the output files created by the tasks.</param>
         /// <returns>A collection of the submitted tasks.</returns>
-        private static async Task<List<CloudTask>> AddTasksAsync(BatchClient batchClient, string jobId, List<ResourceFile> inputFiles, string outputContainerSasUrl)
+        private static async Task<List<CloudTask>> AddTasksAsync(BatchClient batchClient, string jobId, List<ResourceFile> inputFiles, string outputContainerSasUrl, CloudStorageAccount linkedStorageAccount)
         {
             Console.WriteLine("Adding {0} tasks to job [{1}]...", inputFiles.Count, jobId);
 
@@ -362,6 +357,21 @@ namespace BatchProcessor
                                 uploadCondition: OutputFileUploadCondition.TaskCompletion))
                     }
             };
+
+            var reducerInputFiles = new List<ResourceFile>();
+            // define the input files for the reducer task
+            foreach (var maptask in tasks)
+            {
+                foreach (var outFile in maptask.OutputFiles)
+                {
+                    // ensure that the container SAS has the following rights: write|read|list - otherwise we can't download the files
+                    var sasContainerUrl = outFile.Destination.Container.ContainerUrl;
+                    var blobName = outFile.Destination.Container.Path;
+                    var sasBlob = sasContainerUrl.Insert(sasContainerUrl.IndexOf('?'), $"/{blobName}");
+                    reducerInputFiles.Add(new ResourceFile(sasBlob, blobName));
+                }
+            }
+            reducer.ResourceFiles = reducerInputFiles;
 
             tasks.Add(reducer);
 

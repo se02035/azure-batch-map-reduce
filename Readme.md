@@ -6,17 +6,14 @@ Although Azure Batch supports Map-Reduce jobs (there is a sample available calle
 
 Especially for simple workloads the task dependency version is quite interesting. Imagine the following: you have a list of input files and you need to run a certain task per file - let's call them the 'map' tasks, take the output of all runs and process the outcome in a final step using executing another task - let's call it the 'reduce' task. 
 
-However, it turns out that there are some limitations transferring data between these two task types (bascially, the output of the map tasks to abnd have it an input for the reduce task). And this repo contains one possibility to overcome that challenge. 
-
 > ***Important**: The code is based on Microsofts Azure Batch samples and re-uses major code parts of the **ArticleProjects** project (https://github.com/Azure/azure-batch-samples).* 
 
 ## Overview & architecture
 
-The solution is split into the following projects:
+The solution consists of the following projects:
 
 - **BatchProcessor**: This commandline application is the main executable and takes care of (input/output) file data transfer as well as Batch job and task creation.
 
-- **BatchProcessor.Task**: This helper console application wraps a commandline process. Additionally, it will donwload the blobs of an configurable Azure Storage blob container to the tasks working directory. This enables to build a Batch task which retrieves the input resource files during runtime (and not when the task is created). 
 
 ## Preparation & setup
 
@@ -30,8 +27,6 @@ Create separate application packages containing the executables (one for the map
 Azure Batch allows to automatically scale the pool nodes based on a custom logic (code). Below is a sample to update (scale up/down) the node instances based on the pending tasks. 
 
 ```csharp
-// In this example, the pool size is adjusted based on the number of tasks in the queue. Note that both comments and line breaks are acceptable in formula strings.
-
 // Get pending tasks for the past 15 minutes.
 $samples = $ActiveTasks.GetSamplePercent(TimeInterval_Minute * 15);
 // If we have fewer than 70 percent data points, we use the last sample point, otherwise we use the maximum of last sample point and the history average.
