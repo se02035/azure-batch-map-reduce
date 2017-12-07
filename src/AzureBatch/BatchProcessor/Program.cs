@@ -33,6 +33,8 @@ namespace BatchProcessor
         private static int BatchJobTimeoutInMinutes;
         private static string BatchJobTaskMapperCommandline;
         private static string BatchJobTaskReducerCommandline;
+        private static string TaskMapOutputFilePattern;
+        private static string TaskReduceOutputFilePattern;
 
         private static string LocalInputDirectory;
         private static string LocalOutputDirectory;
@@ -52,6 +54,8 @@ namespace BatchProcessor
             BatchJobTimeoutInMinutes = int.Parse(ConfigurationManager.AppSettings["BatchJobTimeoutInMinutes"]);
             BatchJobTaskMapperCommandline = ConfigurationManager.AppSettings["BatchJobTaskMapperCommandline"];
             BatchJobTaskReducerCommandline = ConfigurationManager.AppSettings["BatchJobTaskReducerCommandline"];
+            TaskMapOutputFilePattern = ConfigurationManager.AppSettings["TaskMapOutputFilePattern"];
+            TaskReduceOutputFilePattern = ConfigurationManager.AppSettings["TaskReduceOutputFilePattern"];
 
             LocalInputDirectory = ConfigurationManager.AppSettings["LocalInputDirectory"];
             LocalOutputDirectory = ConfigurationManager.AppSettings["LocalOutputDirectory"];
@@ -334,7 +338,7 @@ namespace BatchProcessor
                 {
                     OutputFiles = new List<OutputFile>
                     {
-                        new OutputFile(filePattern: @"dsfinal.txt",
+                        new OutputFile(filePattern: TaskMapOutputFilePattern,
                             destination: new OutputFileDestination(new OutputFileBlobContainerDestination(containerUrl: outputContainerSasUrl, path: $"{taskId}.txt")),
                             uploadOptions: new OutputFileUploadOptions(
                                 uploadCondition: OutputFileUploadCondition.TaskCompletion))
@@ -351,7 +355,7 @@ namespace BatchProcessor
                 DependsOn = TaskDependencies.OnTasks(tasks),
                 OutputFiles = new List<OutputFile>
                     {
-                        new OutputFile(filePattern: @"*.txt",
+                        new OutputFile(filePattern: TaskReduceOutputFilePattern,
                             destination: new OutputFileDestination(new OutputFileBlobContainerDestination(containerUrl: outputContainerSasUrl, path: reducerTaskId)),
                             uploadOptions: new OutputFileUploadOptions(
                                 uploadCondition: OutputFileUploadCondition.TaskCompletion))
@@ -482,6 +486,10 @@ namespace BatchProcessor
 
                 // Save blob contents to a file in the specified folder
                 string localOutputFile = Path.Combine(directoryPath, blob.Name);
+
+                // Create sub-folders if the don't exists
+                Directory.CreateDirectory(Path.GetDirectoryName(localOutputFile));
+
                 await blob.DownloadToFileAsync(localOutputFile, FileMode.Create);
             }
 
